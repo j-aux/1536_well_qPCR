@@ -1,0 +1,346 @@
+---
+title: "1536_test_plate_plan"
+author: "Jamie Auxillos"
+date: "01/11/2020"
+output: html_document
+---
+
+
+```{r setup,warning=FALSE,message=FALSE,echo=FALSE}
+## knitr options for report generation
+knitr::opts_chunk$set(warning=FALSE,message=FALSE,echo=TRUE,cache=FALSE,
+                      results="show",
+                      fig.path="figure_1536_pilot")
+
+
+library(tidyverse)
+library(cowplot)
+library(tidyqpcr)
+library(here)
+
+ # set default theme for graphics
+theme_set(theme_cowplot(font_size=11) %+replace% 
+              theme(panel.border=element_rect(colour = "grey50",
+                                            linetype = "solid",size=0.5),
+                    strip.background = element_blank()))
+
+```
+
+## Plan for reaction setup
+
+Previously Edward optimised the 1536 qPCR method using a 1 ul total reaction volume. This 1 ul reaction consist of:
+  - 0.8uL SYBR Green 2X master mix, diluted 1.6-fold ( 5 mix : 3 H20 )
+  - 0.1uL of 4uM primer pair
+  - 0.1uL of RT reaction, diluted 1:4
+
+Primers and cDNA are loaded on a 384PP (15ul-65 ul) plate and dispensed into the 1536 plate using the Echo. Then the sybr green is loaded into the 1536 plate using the Certus bulk dispenser.
+
+mCherry primer mix
+  - 0.1 ul of 4 uM primer pair
+  - Therefore for 1536 samples, 153.6 ul is needed (1536 x 0.1 = 153.6)
+  - 50 ul of the primer mix is loaded in the source plate
+
+cDNA
+  - For +RT wells
+        - There are 1024x +RT wells, half (512x) are with pPGK1-mCh and the other half (512x) with POT1-ccdB
+        - So the +RT cDNA is diluted 1:4 and 56.2 ul of each cDNA is loaded in the source plate
+  - For -RT wells
+        - There are 512x -RT wells, half (256x) are with pPGK1-mCh and the other half (256x) with POT1-ccdB
+        - So the -RT cDNA is diluted 1:4 and 27.6 ul of each cDNA is loaded in the source plate
+
+
+Sybr green dilution
+  - Dilute the Agilent 2x sybr green 5:3 (MasterMix:water)
+        - The amount of the diluted sybr green  used in the final reaction is 0.8 ul
+        - Therefore, we will need (1536 x 0.8 = 1228.8) 1300 ul of the diluted 5:3 sybr green
+        - for this, 812.5 ul of sybr green is diluted in 487.5 ul of ddH2O
+  - Diluted sybr green is loaded using the bulk dispenser
+
+
+## Label and plan plates
+
+```{r label_destinationplate,dependson="plate_functions"}
+
+# Names of target primers
+Names <- c("mCh-7") 
+
+# Repeats of gene names to account for resting multiple primer sets
+probes <- c(rep(Names,times=32))
+
+# Labelss for strains
+strain_names <- c("pPGK1-mCh", "POT")
+strain_times <- c(rep(strain_names,times=16))
+
+# Rowkey for destination plate
+rowkey <- data.frame(
+                     well_row = make_row_names_lc1536(),
+                     strain= strain_times,
+                     target_id=probes)
+
+# Names for prep_type
+condition <- c("+RT","-RT", "+RT")
+
+# Colkey for destination plate
+colkey <- data.frame(well_col = 1:48,
+                     prep_type=c(rep(condition, times=16)))
+
+qpcr_plateplan <- label_plate_rowcol(
+  plate=create_blank_plate(well_row = make_row_names_lc1536(),
+                              well_col = 1:48),
+                              rowkey=rowkey, colkey=colkey) %>%
+  mutate(sample_id = paste(strain, prep_type,sep="_"))
+
+```
+
+
+## Display the plate plan
+
+```{r display_plates,fig.height=25,fig.width=35}
+display_plate(qpcr_plateplan) 
+```
+
+
+```{r label_sourceplate,dependson="plate_functions"}
+
+# Names of primers
+Names <- c("mCh-7") 
+
+# Repeats of gene names to account for resting multiple primer sets
+probes <- c(rep(Names,times=4))
+
+# Primer rowkey
+primer_rowkey <- data.frame(
+                     well_row = LETTERS[1:4],
+                     target_id=probes)
+# Primer colkey
+primer_colkey <- data.frame(well_col = 3:4)
+
+# Primer plate
+primer_plateplan <- label_plate_rowcol(create_blank_plate(well_row = LETTERS[1:4],
+                              well_col = 3:4),
+                              rowkey=primer_rowkey, colkey=primer_colkey)
+
+
+
+
+# Names of cDNA
+strain_names <- c("pPGK1-mCh", "POT")
+strain_times <- c(rep(strain_names,times=4))
+cdna_names <- c("+RT", "+RT", "+RT", "-RT")
+cdna_times <- c(rep(cdna_names,each=2))
+
+# cDNA rowkey
+cdna_rowkey <- data.frame(
+                     well_row = LETTERS[1:8],
+                     strain=strain_times,
+                     prep_type=cdna_times)
+# cDNA colkey
+cdna_colkey <- data.frame(well_col = 1)
+
+# cDNA plate
+cdna_plateplan <- label_plate_rowcol(
+  plate=create_blank_plate(well_row = LETTERS[1:8],
+                              well_col = 1),
+                              rowkey=cdna_rowkey, colkey=cdna_colkey)   %>%
+  mutate(sample_id = paste(strain, prep_type,sep="_"))  
+
+```
+
+```{r pick_list_functions}
+pair_qpcr_wells_to_source_wells_by_liquid_type <- function(qpcr_plateplan, source_plateplan, liquid_type = "sample"){
+  
+  # check liquid_type is either sample or target
+  if(!liquid_type %in% c("sample", "target")) stop("Incorrect liquid type.")
+  
+  # combine prep_type and sample_id for both plates
+  if(liquid_type == "sample"){
+    source_plateplan <- unite(source_plateplan,
+                              sample_prep,
+                              sample_id,
+                              prep_type,
+                              remove = FALSE)
+    
+    qpcr_plateplan <- unite(qpcr_plateplan,
+                            sample_prep,
+                            sample_id,
+                            prep_type,
+                            remove = FALSE)
+  }
+  
+  # check that the total volume of each liquid across all wells in the source plate is 
+  # greater than the required amount across all wells in the qpcr_plate
+  check_source_plate_volume(source_plateplan, qpcr_plateplan, liquid_type)
+  
+  # Ensure all target_id and sample_id wells in source/qpcr plates contain the same total volumes, else automatic assignment is too difficult
+  if(length(unique(source_plateplan %>%
+                   filter(!is.na(.data[[paste0(liquid_type, "_id")]])) %>%
+                   pull(.data$max_well_volume))) > 1) {
+    stop("Cannot automatically assign wells if max liquid volumes of any ", liquid_type, " varies across different wells of the source plate") }
+  
+  if(length(unique(qpcr_plateplan %>%
+                   filter(!is.na(.data[[paste0(liquid_type, "_id")]])) %>%
+                   pull(.data[[paste0(liquid_type, "_volume")]]))) > 1) {
+    stop("Cannot automatically assign wells if requested liquid volumes of any ", liquid_type, " varies across different wells of the qpcr plate")
+                   }
+    
+    # Calculate how many qpcr wells can be supplied from a single source well
+  qpcr_wells_per_source_well <- floor(unique(source_plateplan %>%
+                                         filter(!is.na(.data[[paste0(liquid_type,
+                                                                     "_id")]])) %>%
+                                           mutate(well_volume = 
+                                                    max_well_volume - min_well_volume) %>%
+                                         pull(.data$well_volume)) / 
+                                         unique(qpcr_plateplan %>%
+                                         filter(!is.na(.data[[paste0(liquid_type,
+                                                                     "_id")]])) %>%
+                                         pull(.data[[paste0(liquid_type, "_volume")]])))
+    
+    
+    # Duplicate source wells to equal number of qpcr wells that can be supplied
+  total_avaliable_aliquots <- source_plateplan %>%
+    filter(!is.na(.data[[paste0(liquid_type,"_id")]])) %>%
+    uncount(qpcr_wells_per_source_well)
+  
+  # pair wells
+  if(liquid_type == "sample"){
+  
+    paired_qpcr_plateplan <- qpcr_plateplan %>%
+      filter(!is.na(.data[["sample_id"]])) %>%
+      group_by(.data[["sample_prep"]]) %>%
+      mutate(source_well = assign_source_wells(.data[["sample_prep"]],
+                                               "sample_prep",
+                                               total_avaliable_aliquots)) %>%
+      ungroup() %>%
+      select(-sample_prep)
+  }
+  else{
+    paired_qpcr_plateplan <- qpcr_plateplan %>%
+      filter(!is.na(.data[[paste0(liquid_type,"_id")]])) %>%
+      group_by(.data[[paste0(liquid_type,"_id")]]) %>%
+      mutate(source_well = assign_source_wells(.data[[paste0(liquid_type,"_id")]],
+                                               paste0(liquid_type,"_id"),
+                                               total_avaliable_aliquots))
+  }
+  
+  paired_qpcr_plateplan %>%
+    rename_with((function(col_names)paste0(liquid_type, "_source_well")),source_well)
+  
+}
+
+check_source_plate_volume <- function(source_plateplan, qpcr_plateplan, liquid_type = "sample") {
+  # check liquid_type is either sample or target
+  if(!liquid_type %in% c("sample", "target")) stop("Incorrect liquid type.")
+  
+  # Select column to group by
+  if(liquid_type == "sample") grouping_variable = "sample_prep"
+  else grouping_variable = paste0(liquid_type, "_id")
+  
+  total_required_volume <- qpcr_plateplan %>%
+    group_by(.data[[grouping_variable]]) %>%
+    summarise(total_required_volume = sum(.data[[paste0(liquid_type, "_volume")]])) %>%
+    pull(total_required_volume)
+  
+  total_available_volume <- source_plateplan %>%
+    filter(!is.na(.data[[paste0(liquid_type, "_id")]])) %>%
+    group_by(.data[[grouping_variable]]) %>%
+    summarise(total_available_volume = sum(max_well_volume - min_well_volume)) %>%
+    pull(total_available_volume)
+  
+  if (sum(total_required_volume > total_available_volume) != 0) {
+    stop(
+      paste0("Source plate does not have enough total ", 
+             paste0(qpcr_plateplan %>% 
+                      arrange(.data[[grouping_variable]]) %>% 
+                      distinct(.data[[grouping_variable]]) %>% 
+                      filter(total_required_volume > total_available_volume) %>% 
+                      pull(.data[[grouping_variable]]), collapse = " & "),
+             " to fill qpcr plate."))
+  }
+}
+
+assign_source_wells <- function(liquid_id, liquid_column, total_avaliable_aliquots){
+  paired_source_wells <- total_avaliable_aliquots %>%
+    filter(.data[[liquid_column]] == liquid_id[[1]]) %>%
+    pull(well)
+  
+  if(length(paired_source_wells) < length(liquid_id)) stop("Automatic source-qpcr well assignment failed, you may have to manually assign wells")
+  
+  paired_source_wells[1:length(liquid_id)]
+}
+
+generate_picklist <- function(qpcr_plate_well_map, file){
+  pick_targets <- qpcr_plate_well_map %>%
+    filter(!is.na(sample_id)) %>%
+    transmute(Source = target_source_well,
+              Target = well,
+              Volume = target_volume,
+              LType = "Target",
+              LID   = target_id)
+
+pick_samples <- qpcr_plate_well_map %>%
+    filter(!is.na(sample_id)) %>%
+    transmute(Source = sample_source_well,
+              Target = well,
+              Volume = sample_volume,
+              LType = "Sample",
+              LID   = sample_id)
+
+picklist <- bind_rows(pick_targets, pick_samples) %>%
+  separate(Source, into = c("Source_row", "Source_col"), remove = FALSE, sep = "(?<=[A-Za-z])(?=[1-9])") %>%
+  separate(Target, into = c("Target_row", "Target_col"), remove = FALSE, sep = "(?<=[A-Za-z])(?=[1-9])") %>%
+  arrange(Source_row, as.integer(Source_col), Target_row, as.integer(Target_col)) %>%
+  select(-Source_row, -Source_col, -Target_row, -Target_col)
+
+cat(
+"# qPCR-picklist-2020-11-26-Echo-1536_testplate.txt
+# Picklist for 1536-well qPCR loading with Echo liquid handler
+# Four cDNA samples (2x +RT and 2x -RT) used with 1 target_id (primer)
+# Sam Haynes and Jamie Auxillos, 26 Nov 2020
+#
+# Plates:
+#  Source: 384PP 2.0, Labcyte PP-0200
+#  Target: 1536-well PCR plate
+# 
+# Columns:
+#   Source: Well in source/loading plate
+#   Target: Well in target/qPCR plate
+#   Volume: Liquid volume to transfer in nl
+#   LType:  Type of liquid being loaded
+#   LID:    Sample ID/name of liquid being loaded
+# 
+",
+    file=file,sep="")
+
+write_tsv(picklist,
+          file,
+          append=TRUE,col_names=TRUE)
+
+}
+```
+
+```{r create_picklist}
+
+# Add the max/min volumes of liquid in each well. The primer and cdna plates can have different volumes to each other but must be the same across each individual plate.
+
+primer_plateplan <- primer_plateplan %>%
+  mutate(max_well_volume = 50, min_well_volume = 20)
+
+cdna_plateplan <- cdna_plateplan %>%
+  mutate(max_well_volume = 50, min_well_volume = 20)
+
+source_plateplan <- bind_rows(primer_plateplan, cdna_plateplan)
+
+# add primer and cdna volumes to each qpcr well (must be the same value across all wells but the target and sample volumes can differ from each other)
+ 
+qpcr_plateplan <- qpcr_plateplan %>%
+    mutate(target_volume = 0.1, sample_volume = 0.1)
+
+# Map source and qpcr plate wells
+
+qpcr_plate_well_map <- pair_qpcr_wells_to_source_wells_by_liquid_type(qpcr_plateplan, source_plateplan, liquid_type = "target") %>%
+  pair_qpcr_wells_to_source_wells_by_liquid_type(source_plateplan, liquid_type = "sample")
+
+# Create pick list
+
+generate_picklist(qpcr_plate_well_map, here("qPCR-picklist-2020-11-26-Echo-1536_testplate.txt"))
+```
